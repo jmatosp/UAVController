@@ -1,9 +1,8 @@
-#include <MadgwickAHRS.h>
+#include "Wire.h"
 #include "I2Cdev.h"
 #include "MPU6050.h"
-#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
-    #include "Wire.h"
-#endif
+#include "HMC5883L.h"
+#include "MadgwickAHRS.h"
 
 // class default I2C address is 0x68
 // specific I2C addresses may be passed as a parameter here
@@ -12,9 +11,16 @@
 MPU6050 accelgyro;
 //MPU6050 accelgyro(0x69); // <-- use for AD0 high
 
+// class default I2C address is 0x1E
+// specific I2C addresses may be passed as a parameter here
+// this device only supports one I2C address (0x1E)
+HMC5883L mag;
+
+// mag/accell/gyro input filter
 Madgwick filter;
+
+// PWM
 unsigned long microsPerReading, microsPrevious;
-float accelScale, gyroScale;
 
 void setup() {
   Serial.begin(38400);
@@ -26,26 +32,53 @@ void setup() {
   // initialize device
   Serial.println("Initializing I2C devices...");
   accelgyro.initialize();
+  mag.initialize();
+  barometer.initialize();
 
   microsPerReading = 50;
 
-  // verify connection to MCU6050
+  // verify connection I2C devices
   Serial.println("Testing device connections...");
   Serial.println(accelgyro.testConnection() ? "MPU6050 connection successful" : "MPU6050 connection failed");
+  Serial.println(mag.testConnection() ? "HMC5883L connection successful" : "HMC5883L connection failed");
+  Serial.println(barometer.testConnection() ? "BMP085 connection successful" : "BMP085 connection failed");
 
   Serial.println("Setup complete");
 }
 
 void loop() {
-  int16_t aix, aiy, aiz;
-  int16_t gix, giy, giz;
-  int16_t ax, ay, az;
-  int16_t gx, gy, gz;
-  unsigned long microsNow;
+    // mag readings
+    int16_t mx, my, mz;
+
+    int16_t aix, aiy, aiz;
+    int16_t gix, giy, giz;
+    int16_t ax, ay, az;
+    int16_t gx, gy, gz;
+    unsigned long microsNow;
 
   // check if it's time to read data and update the filter
   microsNow = micros();
   if (microsNow - microsPrevious >= microsPerReading) {
+
+    // request temperature
+    barometer.setControl(BMP085_MODE_TEMPERATURE);
+    // read calibrated temperature value in degrees Celsius
+    temperature = barometer.getTemperatureC();
+    // read calibrated pressure value in Pascals (Pa)
+    pressure = barometer.getPressure();
+    
+    // read raw heading measurements from device
+    mag.getHeading(&mx, &my, &mz);
+
+    // output raw heading from mag
+    Serial.print(mx); Serial.print("\t");
+    Serial.print(my); Serial.print("\t");
+    Serial.print(mz); Serial.print("\t");
+
+    // To calculate heading in degrees. 0 degree indicates North
+    float heading = atan2(my, mx);
+    if (heading < 0) heading += 2 * M_PI;
+    Serial.println(heading * 180/M_PI); Serial.print("\t");
 
     // read raw accel/gyro measurements from device
     accelgyro.getMotion6(&aix, &ay, &aiz, &gix, &giy, &giz);
