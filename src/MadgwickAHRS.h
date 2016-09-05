@@ -69,5 +69,17 @@ public:
         if (!anglesComputed) computeAngles();
         return yaw;
     }
+    float getQuaternion0() {
+        return q0;
+    }
+    float getQuaternion1() {
+        return q1;
+    }
+    float getQuaternion2() {
+        return q2;
+    }
+    float getQuaternion3() {
+        return q3;
+    }
 };
 #endif

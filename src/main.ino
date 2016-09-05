@@ -27,7 +27,7 @@ void setup() {
   Serial.println("Initializing I2C devices...");
   accelgyro.initialize();
 
-  microsPerReading = 10;
+  microsPerReading = 50;
 
   // verify connection to MCU6050
   Serial.println("Testing device connections...");
@@ -41,7 +41,6 @@ void loop() {
   int16_t gix, giy, giz;
   int16_t ax, ay, az;
   int16_t gx, gy, gz;
-  int16_t roll, pitch, yaw;
   unsigned long microsNow;
 
   // check if it's time to read data and update the filter
@@ -52,13 +51,12 @@ void loop() {
     accelgyro.getMotion6(&aix, &ay, &aiz, &gix, &giy, &giz);
 
     // display tab-separated accel/gyro x/y/z values
-    Serial.print("a/g:\t");
     Serial.print(ax); Serial.print("\t");
     Serial.print(ay); Serial.print("\t");
     Serial.print(az); Serial.print("\t");
     Serial.print(gx); Serial.print("\t");
     Serial.print(gy); Serial.print("\t");
-    Serial.println(gz);
+    Serial.print(gz); Serial.print("\t");
 
     // convert from raw data to gravity and degrees/second units
     ax = convertRawAcceleration(aix);
@@ -71,19 +69,26 @@ void loop() {
     // update the filter, which computes orientation
     filter.updateIMU(gx, gy, gz, ax, ay, az);
 
-    // print the heading, pitch and roll
-    roll = filter.getRoll();
-    pitch = filter.getPitch();
-    yaw = filter.getYaw();
-    Serial.print(yaw); Serial.print("\t");
-    Serial.print(pitch); Serial.print("\t");
-    Serial.println(roll); Serial.print("\t");
+    // output quaternion filtered data
+    Serial.print(filter.getQuaternion0()); Serial.print("\t");
+    Serial.print(filter.getQuaternion1()); Serial.print("\t");
+    Serial.print(filter.getQuaternion2()); Serial.print("\t");
+    Serial.print(filter.getQuaternion3()); Serial.print("\t");
+
+    // output filtered yaw, pitch and roll
+    Serial.print(filter.getRoll()); Serial.print("\t");
+    Serial.print(filter.getPitch()); Serial.print("\t");
+    Serial.print(filter.getYaw()); Serial.print("\t");
 
     // increment previous time, so we keep proper pace
+    Serial.print(microsPerReading); Serial.print("\t");
     microsPrevious = microsPrevious + microsPerReading;
+
+    Serial.println("\n");
   }
 }
 
+// @todo REMOVE Madgwick implements this, confirm first with debug output
 float convertRawAcceleration(int16_t aRaw) {
   // since we are using 2G range
   // -2g maps to a raw value of -32768
@@ -93,6 +98,7 @@ float convertRawAcceleration(int16_t aRaw) {
   return a;
 }
 
+// @todo REMOVE Madgwick implements this, confirm first with debug output
 float convertRawGyro(int16_t gRaw) {
   // since we are using 250 degrees/seconds range
   // -250 maps to a raw value of -32768
