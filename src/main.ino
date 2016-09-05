@@ -3,6 +3,7 @@
 #include "MPU6050.h"
 #include "HMC5883L.h"
 #include "MadgwickAHRS.h"
+#include "BMP085.h"
 
 // class default I2C address is 0x68
 // specific I2C addresses may be passed as a parameter here
@@ -16,109 +17,146 @@ MPU6050 accelgyro;
 // this device only supports one I2C address (0x1E)
 HMC5883L mag;
 
+BMP085 barometer;
+
 // mag/accell/gyro input filter
 Madgwick filter;
 
 // PWM
 unsigned long microsPerReading, microsPrevious;
 
+bool allSystemsGo = true;
+
+char* TAB = "\t";
+
 void setup() {
-  Serial.begin(38400);
-  Serial.println("Starting setup");
+    Serial.begin(38400);
 
-  // join I2C bus
-  Wire.begin();
+    banner();
 
-  // initialize device
-  Serial.println("Initializing I2C devices...");
-  accelgyro.initialize();
-  mag.initialize();
-  barometer.initialize();
+    Serial.println(F("Version 0.0000001"));
 
-  microsPerReading = 50;
+    Serial.println(F("Starting setup"));
 
-  // verify connection I2C devices
-  Serial.println("Testing device connections...");
-  Serial.println(accelgyro.testConnection() ? "MPU6050 connection successful" : "MPU6050 connection failed");
-  Serial.println(mag.testConnection() ? "HMC5883L connection successful" : "HMC5883L connection failed");
-  Serial.println(barometer.testConnection() ? "BMP085 connection successful" : "BMP085 connection failed");
+    // join I2C bus
+    Wire.begin();
 
-  Serial.println("Setup complete");
+    // initialize device
+    Serial.println(F("Initializing I2C devices..."));
+    accelgyro.initialize();
+    mag.initialize();
+    barometer.initialize();
+
+    microsPerReading = 500000;
+
+    // verify connection I2C devices
+    Serial.println(F("Testing device connections..."));
+
+    if (accelgyro.testConnection()) {
+        Serial.println(F("MPU6050 connection successful"));
+    } else {
+        allSystemsGo &= false;
+        Serial.println(F("MPU6050 connection failed"));
+    }
+
+    if (mag.testConnection()) {
+        Serial.println(F("HMC5883L connection successful"));
+    } else {
+        allSystemsGo &= false;
+        Serial.println(F("HMC5883L connection failed"));
+    }
+
+    if (barometer.testConnection()) {
+        Serial.println(F("BMP085 connection successful"));
+    } else {
+        allSystemsGo &= false;
+        Serial.println(F("BMP085 connection failed"));
+    }
+
+    if (!allSystemsGo) {
+        Serial.println(F("!!! Setup failed !!!"));
+        while (true) {}
+    };
+
+    Serial.println(F("Setup complete"));
 }
 
 void loop() {
-    // mag readings
     int16_t mx, my, mz;
-
     int16_t aix, aiy, aiz;
     int16_t gix, giy, giz;
     int16_t ax, ay, az;
     int16_t gx, gy, gz;
+    float pressure;
+    float altitude;
     unsigned long microsNow;
 
-  // check if it's time to read data and update the filter
-  microsNow = micros();
-  if (microsNow - microsPrevious >= microsPerReading) {
+    // request pressure (3x oversampling mode, high detail, 23.5ms delay)
+    barometer.setControl(BMP085_MODE_PRESSURE_3);
 
-    // request temperature
-    barometer.setControl(BMP085_MODE_TEMPERATURE);
-    // read calibrated temperature value in degrees Celsius
-    temperature = barometer.getTemperatureC();
-    // read calibrated pressure value in Pascals (Pa)
-    pressure = barometer.getPressure();
-    
-    // read raw heading measurements from device
-    mag.getHeading(&mx, &my, &mz);
+    // check if it's time to read data and update the filter
+    microsNow = micros();
+    if (microsNow - microsPrevious >= microsPerReading) {
+        // read calibrated pressure value in Pascals (Pa)
+        pressure = barometer.getPressure();
 
-    // output raw heading from mag
-    Serial.print(mx); Serial.print("\t");
-    Serial.print(my); Serial.print("\t");
-    Serial.print(mz); Serial.print("\t");
+        // calculate absolute altitude in meters based on known pressure
+        // (may pass a second "sea level pressure" parameter here,
+        // otherwise uses the standard value of 101325 Pa)
+        altitude = barometer.getAltitude(pressure);
 
-    // To calculate heading in degrees. 0 degree indicates North
-    float heading = atan2(my, mx);
-    if (heading < 0) heading += 2 * M_PI;
-    Serial.println(heading * 180/M_PI); Serial.print("\t");
+        // read raw heading measurements from device
+        mag.getHeading(&mx, &my, &mz);
 
-    // read raw accel/gyro measurements from device
-    accelgyro.getMotion6(&aix, &ay, &aiz, &gix, &giy, &giz);
+        // output raw heading from mag
+        Serial.print(mx); Serial.print("\t");
+        Serial.print(my); Serial.print("\t");
+        Serial.print(mz); Serial.print("\t");
 
-    // display tab-separated accel/gyro x/y/z values
-    Serial.print(ax); Serial.print("\t");
-    Serial.print(ay); Serial.print("\t");
-    Serial.print(az); Serial.print("\t");
-    Serial.print(gx); Serial.print("\t");
-    Serial.print(gy); Serial.print("\t");
-    Serial.print(gz); Serial.print("\t");
+        // To calculate heading in degrees. 0 degree indicates North
+        float heading = atan2(my, mx);
+        if (heading < 0) heading += 2 * M_PI;
+        Serial.print(heading * 180/M_PI); Serial.print(TAB);
 
-    // convert from raw data to gravity and degrees/second units
-    ax = convertRawAcceleration(aix);
-    ay = convertRawAcceleration(aiy);
-    az = convertRawAcceleration(aiz);
-    gx = convertRawGyro(gix);
-    gy = convertRawGyro(giy);
-    gz = convertRawGyro(giz);
+        // read raw accel/gyro measurements from device
+        accelgyro.getMotion6(&aix, &ay, &aiz, &gix, &giy, &giz);
 
-    // update the filter, which computes orientation
-    filter.updateIMU(gx, gy, gz, ax, ay, az);
+        // display tab-separated accel/gyro x/y/z values
+        Serial.print(ax); Serial.print(TAB);
+        Serial.print(ay); Serial.print(TAB);
+        Serial.print(az); Serial.print(TAB);
+        Serial.print(gx); Serial.print(TAB);
+        Serial.print(gy); Serial.print(TAB);
+        Serial.print(gz); Serial.print(TAB);
 
-    // output quaternion filtered data
-    Serial.print(filter.getQuaternion0()); Serial.print("\t");
-    Serial.print(filter.getQuaternion1()); Serial.print("\t");
-    Serial.print(filter.getQuaternion2()); Serial.print("\t");
-    Serial.print(filter.getQuaternion3()); Serial.print("\t");
+        // convert from raw data to gravity and degrees/second units
+        ax = convertRawAcceleration(aix);
+        ay = convertRawAcceleration(aiy);
+        az = convertRawAcceleration(aiz);
+        gx = convertRawGyro(gix);
+        gy = convertRawGyro(giy);
+        gz = convertRawGyro(giz);
 
-    // output filtered yaw, pitch and roll
-    Serial.print(filter.getRoll()); Serial.print("\t");
-    Serial.print(filter.getPitch()); Serial.print("\t");
-    Serial.print(filter.getYaw()); Serial.print("\t");
+        // update the filter, which computes orientation
+        filter.updateIMU(gx, gy, gz, ax, ay, az);
 
-    // increment previous time, so we keep proper pace
-    Serial.print(microsPerReading); Serial.print("\t");
-    microsPrevious = microsPrevious + microsPerReading;
+        // output quaternion filtered data
+        Serial.print(filter.getQuaternion0()); Serial.print(TAB);
+        Serial.print(filter.getQuaternion1()); Serial.print(TAB);
+        Serial.print(filter.getQuaternion2()); Serial.print(TAB);
+        Serial.print(filter.getQuaternion3()); Serial.print(TAB);
 
-    Serial.println("\n");
-  }
+        // output filtered yaw, pitch and roll
+        Serial.print(filter.getRoll()); Serial.print(TAB);
+        Serial.print(filter.getPitch()); Serial.print(TAB);
+        Serial.print(filter.getYaw()); Serial.print(TAB);
+
+        // increment previous time, so we keep proper pace
+        Serial.print(microsPerReading); Serial.print(TAB);
+        microsPrevious = microsPrevious + microsPerReading;
+
+        Serial.println("\n");
+    }
 }
 
 // @todo REMOVE Madgwick implements this, confirm first with debug output
@@ -139,4 +177,27 @@ float convertRawGyro(int16_t gRaw) {
 
   float g = (gRaw * 250.0) / 32768.0;
   return g;
+}
+
+void banner() {
+    Serial.println(F(" ██░ ██  ▄▄▄       █     █░██ ▄█▀▓█████▓██   ██▓▓█████"));
+    Serial.println(F("▓██░ ██▒▒████▄    ▓█░ █ ░█░██▄█▒ ▓█   ▀ ▒██  ██▒▓█   ▀"));
+    Serial.println(F("▒██▀▀██░▒██  ▀█▄  ▒█░ █ ░█▓███▄░ ▒███    ▒██ ██░▒███"));
+    Serial.println(F("░▓█ ░██ ░██▄▄▄▄██ ░█░ █ ░█▓██ █▄ ▒▓█  ▄  ░ ▐██▓░▒▓█  ▄"));
+    Serial.println(F("░▓█▒░██▓ ▓█   ▓██▒░░██▒██▓▒██▒ █▄░▒████▒ ░ ██▒▓░░▒████▒"));
+    Serial.println(F(" ▒ ░░▒░▒ ▒▒   ▓▒█░░ ▓░▒ ▒ ▒ ▒▒ ▓▒░░ ▒░ ░  ██▒▒▒ ░░ ▒░ ░"));
+    Serial.println(F(" ▒ ░▒░ ░  ▒   ▒▒ ░  ▒ ░ ░ ░ ░▒ ▒░ ░ ░  ░▓██ ░▒░  ░ ░  ░"));
+    Serial.println(F(" ░  ░░ ░  ░   ▒     ░   ░ ░ ░░ ░    ░   ▒ ▒ ░░     ░"));
+    Serial.println(F(" ░  ░  ░      ░  ░    ░   ░  ░      ░  ░░ ░        ░  ░"));
+    Serial.println(F("                                       ░ ░"));
+    Serial.println(F("  █████▒██▓     ██▓  ▄████  ██░ ██ ▄▄▄█████▓    ▄████▄   ▒█████   ███▄    █ ▄▄▄█████▓ ██▀███   ▒█████   ██▓     ██▓    ▓█████  ██▀███"));
+    Serial.println(F("▓██   ▒▓██▒    ▓██▒ ██▒ ▀█▒▓██░ ██▒▓  ██▒ ▓▒   ▒██▀ ▀█  ▒██▒  ██▒ ██ ▀█   █ ▓  ██▒ ▓▒▓██ ▒ ██▒▒██▒  ██▒▓██▒    ▓██▒    ▓█   ▀ ▓██ ▒ ██▒"));
+    Serial.println(F("▒████ ░▒██░    ▒██▒▒██░▄▄▄░▒██▀▀██░▒ ▓██░ ▒░   ▒▓█    ▄ ▒██░  ██▒▓██  ▀█ ██▒▒ ▓██░ ▒░▓██ ░▄█ ▒▒██░  ██▒▒██░    ▒██░    ▒███   ▓██ ░▄█ ▒"));
+    Serial.println(F("░▓█▒  ░▒██░    ░██░░▓█  ██▓░▓█ ░██ ░ ▓██▓ ░    ▒▓▓▄ ▄██▒▒██   ██░▓██▒  ▐▌██▒░ ▓██▓ ░ ▒██▀▀█▄  ▒██   ██░▒██░    ▒██░    ▒▓█  ▄ ▒██▀▀█▄"));
+    Serial.println(F("░▒█░   ░██████▒░██░░▒▓███▀▒░▓█▒░██▓  ▒██▒ ░    ▒ ▓███▀ ░░ ████▓▒░▒██░   ▓██░  ▒██▒ ░ ░██▓ ▒██▒░ ████▓▒░░██████▒░██████▒░▒████▒░██▓ ▒██▒"));
+    Serial.println(F(" ▒ ░   ░ ▒░▓  ░░▓   ░▒   ▒  ▒ ░░▒░▒  ▒ ░░      ░ ░▒ ▒  ░░ ▒░▒░▒░ ░ ▒░   ▒ ▒   ▒ ░░   ░ ▒▓ ░▒▓░░ ▒░▒░▒░ ░ ▒░▓  ░░ ▒░▓  ░░░ ▒░ ░░ ▒▓ ░▒▓░"));
+    Serial.println(F(" ░     ░ ░ ▒  ░ ▒ ░  ░   ░  ▒ ░▒░ ░    ░         ░  ▒     ░ ▒ ▒░ ░ ░░   ░ ▒░    ░      ░▒ ░ ▒░  ░ ▒ ▒░ ░ ░ ▒  ░░ ░ ▒  ░ ░ ░  ░  ░▒ ░ ▒░"));
+    Serial.println(F(" ░ ░     ░ ░    ▒ ░░ ░   ░  ░  ░░ ░  ░         ░        ░ ░ ░ ▒     ░   ░ ░   ░        ░░   ░ ░ ░ ░ ▒    ░ ░     ░ ░      ░     ░░   ░"));
+    Serial.println(F("           ░  ░ ░        ░  ░  ░  ░            ░ ░          ░ ░           ░             ░         ░ ░      ░  ░    ░  ░   ░  ░   ░"));
+    Serial.println(F("                                               ░"));
 }
